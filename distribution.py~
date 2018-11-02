@@ -1,0 +1,10 @@
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("MANIFEST_EXPORT", help="full path of the manifest export")
+parser.add_argument("-v", "--verbose", help="Update actions", action="store_true")
+parser.add_argument("-c", "--concat", help="Concatenate two or more manifests")
+args = parser.parse_args()
+
+if args.verbose:
+    print("Verbosity turned on")
