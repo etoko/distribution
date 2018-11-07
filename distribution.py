@@ -33,8 +33,9 @@ root.withdraw()
 TABLE_STYLE = "Light Grid Accent 1"
 CATEGORIES = {"f": "Food", "c": "Cash"}
 DAILY_FOOD_RATION = {"Rice": 0.4, "CSB":0.05, "Pulses":0.08, "Salt":0.01, "Vegetable Oil":0.03}
-MONTHLY_CASH_RATION=31000
+#MONTHLY_ CASH_RATION = 31000
 RECENT_DATE = datetime.date.today()
+MONTHLY_CASH_RATION = 31000
 RECENT_DATE_STRING = RECENT_DATE.strftime("%A, %d %B %Y")
 df_gps = pd.DataFrame({
     "FDP": ["Youth Centre", "Magamaga"], 
@@ -378,7 +379,7 @@ def pt_food(df, doc, **kwargs):
         doc.add_picture("food_report.png")
 
 
-def pt_cash(df, doc):
+def pt_cash(df, doc, *args, **kwargs):
     #Distribution Table
     df_distr = df[df.Status=="Collected"]
     df_distr = df_distr.pivot_table(\
@@ -398,6 +399,10 @@ def pt_cash(df, doc):
     df_distr["Cash Distributed"] = (df_distr.Collected * df_distr.index)* MONTHLY_CASH_RATION
     df_distr.insert(loc=0, column="Family Size", value=df_distr.index)
     
+    if kwargs:
+        if kwargs.get("total"):
+            return df_distr
+
     food = df_distr[["Cash Distributed"]]
     food.plot(kind="bar", stacked=True, rot=0)
     ax = plt.gca()
@@ -618,18 +623,41 @@ def cycle():
     frames.loc[:, "cycle"] = pd.to_numeric(frames.cycle)
     d = {"first_heading": calendar.month_name[cycle] + " Distribution Report"}
     doc.add_heading("Distribution Trends", level=2)
-    frames_hh_benefit_pivot = frames.pivot_table(aggfunc=len, columns="cycle", index="benefit", values="ProcessingGroupSize")
-    frames_popn_benefit_pivot = frames.pivot_table(aggfunc=np.sum, columns="cycle", index=["benefit", "Status"], values="ProcessingGroupSize")
+    df_cash_collected = frames[frames.Status == "Collected"]
+    df_cash_collected = df_cash_collected[df_cash_collected.benefit == "Cash"]
+    df_cash_collected.loc[:,"Cash"] = df_cash_collected.loc[:,"ProcessingGroupSize"] * MONTHLY_CASH_RATION
+    CEREAL_RATION = 0.4*31
+    PULSE_RATION = 31 * 0.08
+    VEGETABLE_OIL_RATION = 31*0.03
+    SALT_RATION = 31*0.01
+    CSB_RATION = 31*0.05
+    df_cash_collected_pv = df_cash_collected.pivot_table(columns="cycle", aggfunc=np.sum, values = "Cash") 
+    df_cash_collected_pv = sanitise_table_header(df_cash_collected_pv)
+    add_table(df_cash_collected_pv, doc)
+    df_food_collected = frames[frames.benefit=="Food"]
+    df_food_collected = frames[""]
+
+
+    frames_hh_benefit_pivot = frames.pivot_table(aggfunc=[len, np.sum], columns="cycle", index="benefit", values="ProcessingGroupSize")
+    frames_popn_benefit_pivot = frames.pivot_table(aggfunc=[len, np.sum], columns="cycle", index=["benefit", "Status"], values="ProcessingGroupSize")
     #frames_pivot = frames.pivot_table(index, columns="cycle", aggfunc=len)
     frames_hh_benefit_pivot.insert(0, "Value", frames_hh_benefit_pivot.index)
-    doc.add_heading("Number of Households Receiving Assistance by month", level=3)
+    doc.add_heading("Number of Households and Population Receiving Assistance by month", level=3)
+
+    grand_total = pd.concat(
+            [frames_hh_benefit_pivot, frames_popn_benefit_pivot]
+            ).append(
+                    frames_hh_benefit_pivot.sum().rename(('Grand', 'Total'))
+                    )
+    grand_total = sanitise_table_header(grand_total)
+    add_table(grand_total, doc)
+
     frames_hh_benefit_pivot = sanitise_table_header(frames_hh_benefit_pivot)
 
-    doc.add_heading("Number of people receiving assistance by month", level=3)
     frames_popn_benefit_pivot.insert(0, "Value", frames_popn_benefit_pivot.index)
     frames_popn_benefit_pivot = sanitise_table_header(frames_popn_benefit_pivot)
-    add_table(frames_hh_benefit_pivot, doc)
-    add_table(frames_popn_benefit_pivot, doc)
+    #add_table(frames_hh_benefit_pivot, doc)
+    #add_table(frames_popn_benefit_pivot, doc)
     df = frames[frames.cycle == cycle]
     df_pivot = pivot_table(df)
     add_table_heading(df_pivot, doc, mon=cycle, name="") #TODO Add sensible name
@@ -637,6 +665,15 @@ def cycle():
 
     df_food = df[df.benefit == "Food"]
     df_cash = df[df.benefit == "Cash"]
+    
+    #df_cash_pv = pt_cash(df_cash, doc, total = True)
+    
+    df_food_collected = df_food[df_food.Status == "Collected"]
+    df_food_collected_pivot = df_food_collected.pivot_table(aggfunc=np.sum, index="ProcessingGroupSize", \
+            values="Notes", columns="cycle")
+    df_food_collected_pivot = sanitise_table_header(df_food_collected_pivot)
+    #add_table(df_cash_pv, doc)
+    df_cash_collected = df_cash[df_cash.Status == "Collected"]
 
     if not df_food.empty:
         pt_food(df_food, doc)
