@@ -185,6 +185,10 @@ def concatenate(*args, **kwargs):
     df.loc[:,'UpdateDate'] = pd.to_datetime(df.UpdateDate)
     #df.sort_values(by='', na_position="first", axis=1, inplace=True)
 
+    #rename misplet FDP names
+    df.replace(to_replace = "^Magamaga.*", value = "Magamaga", inplace = True, regex=True)
+    df.replace(to_replace = "^Youth Centre.*", value = "Youth Centre", inplace = True, regex=True)
+
     if kwargs:
         export = kwargs.get("export")
         if export:
