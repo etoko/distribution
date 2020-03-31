@@ -14,10 +14,17 @@ from os.path import basename
 
 import getopt, sys
 
+import zipfile
+from pathlib import Path
+from shutil import copyfile
+from shutil import copy
+
 import tkinter as tk
 from tkinter.filedialog import askopenfilename
 from tkinter.filedialog import askopenfilenames
 from tkinter.filedialog import asksaveasfilename
+from tkinter.filedialog import askdirectory
+
 
 """
 Script to generate docx reports from manifest export files during and after food/cash distribution.
@@ -45,7 +52,6 @@ df_gps = pd.DataFrame({
 
 
 def read_excel():
-
     manifest_file = askopenfilename(parent=root, defaultextension='.xlsx',\
         filetypes=[\
         ('Excel','*.xlsx'), \
@@ -155,7 +161,7 @@ def get_settlement(name):
     settlement["name"] = name[0].title() #return the settlement name
     benefit = name[3].strip().upper() #retrieve the benefit type
     benefit = "Food" if benefit == "F" else "Cash"
-    settlement["benefit"] = benefit
+    settlement["modality"] = benefit
     settlement["fdp"] = name[4].split("_")[0].title() #retrieve name of the fdp
     settlement["cycle"] = name[1]
 
@@ -176,7 +182,8 @@ def concatenate(*args, **kwargs):
         frame["settlement"] = settlement["name"]
         frame["fdp"] = settlement["fdp"].split("_")[0].title()
         frame["benefit"] = settlement["benefit"]
-        frame["cycle"] = settlement["cycle"]
+        #frame["cycle"] = settlement["cycle"]
+        frame[:,"cycle"] = pd.to_datetime(frame.CreateDate).month()
         frames.append(frame)
         #print(frame)
     df = pd.concat(frames, sort=False)
@@ -433,7 +440,24 @@ def pt_cash(df, doc, *args, **kwargs):
     
     plt.savefig("stacked_food_chart.png")
     doc.add_picture("stacked_food_chart.png")
-    doc.add_picture("food_report.png")
+    try:
+        doc.add_picture("food_report.png")
+    except FileNotFoundError as err:
+        pass
+
+    df_all = df.copy()
+    df_all = df_all.pivot_table(\
+            index=["ProcessingGroupSize"],\
+            values="ManifestGuid", \
+            columns="Status", \
+            aggfunc=len
+            )
+    df_all.index.name = "Family Size"
+    df_all.insert(loc=0, column="Family Size", value=df_all.index)
+    df_all.replace(np.nan, 0, inplace=True)
+    df_all.loc["Total"] = df_all.sum()
+    doc.add_heading("Distribution Summary", level=1)
+    add_table(df_all, doc)
     
 
 def litigation(df_litigation, doc, *args, **kwargs):
@@ -639,7 +663,7 @@ def cycle():
     df_cash_collected_pv = sanitise_table_header(df_cash_collected_pv)
     add_table(df_cash_collected_pv, doc)
     df_food_collected = frames[frames.benefit=="Food"]
-    df_food_collected = frames[""]
+    #df_food_collected = frames[""]
 
 
     frames_hh_benefit_pivot = frames.pivot_table(aggfunc=[len, np.sum], columns="cycle", index="benefit", values="ProcessingGroupSize")
@@ -687,9 +711,32 @@ def cycle():
     save(doc)
 
 
+def search_manifest():
+
+    #manifest_file = askopenfilename(parent=root, defaultextension='.zip',\
+    #    filetypes=[\
+    #    ('Zip','*.zip'), \
+    #    ], title="Select Zip File")
+    #print(manifest_file)
+    #z = zipfile.ZipFile(manifest_file)
+    #for f in z.namelist():
+    #    dirname = os.path.splitext(f)[0]
+    #    print(dirname)
+    src_directory = askdirectory()
+    file_list = []
+    
+    for path in Path(src_directory).rglob('[a-z]*.xlsx'):
+        file_list.append(path)
+
+    dst_directory = askdirectory()
+
+    for src in file_list:
+        copy(src, dst_directory)
+
+
 def main():
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "ho:v:c", ["help", "period=", "concat"])
+        opts, args = getopt.getopt(sys.argv[1:], "ho:v:c", ["help", "period=", "concat", "search", "s"])
     except getopt.GetoptError as err:
         # print help information and exit:
         print(err)  # will print something like "option -a not recognized"
@@ -712,6 +759,8 @@ def main():
                 daily()
             elif a.lower() == "cycle":
                 cycle()
+        elif o in ("-s", "--search"):
+            search_manifest()
         elif o in ("--concat", "-c"):
             concatenate()
         else:
