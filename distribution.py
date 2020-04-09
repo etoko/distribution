@@ -6,7 +6,9 @@ import matplotlib.pyplot as plt
 from matplotlib import ticker as ptick
 import time
 import seaborn as sns
+
 import docx
+
 import datetime
 import calendar
 import os
@@ -173,17 +175,25 @@ def concatenate(*args, **kwargs):
     combine multiple manifest files from the same/different distribution 
     cyle/settlement/fdp into a single file.
     """
-    data_frames = read_files()
+    data_frames = None
+
+    if args:
+        data_frames = args
+    else:
+        data_frames = read_files()
+
     frames = []
+
     for key, frame in enumerate(data_frames):
         file_name = basename(frame)
         settlement = get_settlement(file_name)
         frame = pd.read_excel(frame)
         frame["settlement"] = settlement["name"]
         frame["fdp"] = settlement["fdp"].split("_")[0].title()
-        frame["benefit"] = settlement["benefit"]
+        frame["modality"] = settlement["modality"]
         #frame["cycle"] = settlement["cycle"]
-        frame[:,"cycle"] = pd.to_datetime(frame.CreateDate).month()
+        frame.loc[:, "CreateDate"] = pd.to_datetime(frame.CreateDate)
+        frame.loc[:,"cycle"] = frame.CreateDate.apply(lambda x: x.month)
         frames.append(frame)
         #print(frame)
     df = pd.concat(frames, sort=False)
@@ -197,12 +207,16 @@ def concatenate(*args, **kwargs):
     df.replace(to_replace = "^Youth Centre.*", value = "Youth Centre", inplace = True, regex=True)
 
     if kwargs:
-        export = kwargs.get("export")
-        if export:
-            export_excel(df)
-            return
-        else:
-            return df
+        for name, value in kwargs.items():
+            if name == "export":
+                if value:
+                    export_excel(df) 
+                else:
+                    return df
+            elif name == "frames":
+                return df
+            else:
+                return df
 
     export_excel(df) 
     
@@ -228,7 +242,10 @@ def add_table_heading(df, doc, **kwargs):
 
 def add_table(df, doc, **kwargs):
     doc_table = doc.add_table(df.shape[0]+1, df.shape[1])
+    font_size = docx.shared.Pt(8)
     doc_table.style = TABLE_STYLE
+    doc_table.style.font.size = font_size
+
 
     for i in range(df.shape[-1]):
         doc_table.cell(0,i).text = df.columns[i]
@@ -542,10 +559,94 @@ def daily():
     doc = create_document(d)
     
     #Distribution Reports
-    frames = read_files()
+    #frames = read_files()
 
     #Store for dataframes sorted according to month
     sorted_frames = {0:[], 1:[]}
+
+    #num_manifests = len(frames)
+
+    def create_pivot():
+        df = concatenate(export=False)
+
+        df.loc[:, "UpdateDate2"] = pd.to_datetime(df.UpdateDate.dt.date)
+        pivot = df.pivot_table(values=["ManifestGuid", "ProcessingGroupSize", "UpdateDate2"], 
+                index=["modality", "settlement"], 
+                aggfunc={"ManifestGuid": len, "UpdateDate2": [np.min, np.max], "ProcessingGroupSize": np.sum})
+        collected_df = df[df.Status == "Collected"]
+        collected_df.loc[:, "UpdateDate2"] = pd.to_datetime(collected_df.UpdateDate.dt.date)
+        collected_pivot = collected_df.pivot_table(values=["ManifestGuid", "ProcessingGroupSize", 
+            "UpdateDate2"], index=["modality", "settlement"], 
+            aggfunc={"ManifestGuid": len, "UpdateDate2": [np.min, np.max], "ProcessingGroupSize": np.sum})
+        merged_pivot = pivot.merge(collected_pivot, left_index=True, right_index=True)
+        merged_pivot = merged_pivot.reset_index(level=[0,1])
+        merged_pivot['index_heading'] = merged_pivot.index
+        merged_pivot = merged_pivot.drop(merged_pivot.columns[[-3, -2,-1]], axis=1)
+        cols = ["Modality", "Settlement", "Planned Households", 
+                "Planned Population", "End Date", "Start Date", 
+                "Served Households", "Served Population"]
+        merged_pivot.columns = cols
+        cols = ["Modality", "Settlement", "Planned Households", 
+                "Planned Population", "Served Households", "Served Population", 
+                "Start Date", "End Date"]
+        merged_pivot = merged_pivot[cols]
+        merged_pivot.loc[:, "Planned Households"] = merged_pivot["Planned Households"].map("{:,}".format)
+        merged_pivot.loc[:, "Planned Population"] = merged_pivot["Planned Population"].map("{:,}".format)
+        merged_pivot.loc[:, "Served Population"] = merged_pivot["Served Population"].map("{:,}".format)
+        merged_pivot.loc[:, "Served Households"] = merged_pivot["Served Households"].map("{:,}".format)
+        merged_pivot.loc[:, "Start Date"] = pd.to_datetime(merged_pivot["Start Date"])
+        merged_pivot.loc[:, "Start Date"] = merged_pivot["Start Date"].dt.strftime("%d-%b-%Y")
+        merged_pivot.loc[:, "End Date"] = pd.to_datetime(merged_pivot["End Date"])
+        merged_pivot.loc[:, "End Date"] = merged_pivot["End Date"].dt.strftime("%d-%b-%Y")
+        merged_pivot = sanitise_table_header(merged_pivot)
+        doc.add_heading("Executive Summary", level=1)
+        add_table(merged_pivot, doc)
+
+
+        #Detail by status
+        df_pivot = df.pivot_table(aggfunc={len}, index=["modality", "settlement", "fdp"], 
+                values=["ManifestGuid"], columns=["Status"], fill_value=0)
+        #df_pivot.loc[:, "Total"] = df_pivot.sum()
+        df_pivot = df_pivot.reset_index(level=[0, 1]) 
+        df_pivot.loc[:, "FDP"] = df_pivot.index
+
+        #Format the table columns to be more readible
+        new_cols = []
+        cols = df_pivot.columns
+        for index, col in enumerate(cols):
+            if index == 0 or index == 1 or index == (len(cols)-1):
+                col_name = col[0].upper()
+                new_cols.insert(index, col_name)
+            else:
+                col_name = col[-1].upper()
+                new_cols.insert(index, col_name)
+
+        df_pivot.columns = new_cols
+        #Move the column for FDP to the third position
+        type(new_cols)
+        df_pivot.columns = new_cols.insert(2, new_cols.pop(-1))
+        df_pivot = sanitise_table_header(df_pivot)
+        doc.add_heading("Distribution by Status", level=1)
+        add_table(df_pivot, doc)
+
+        save(doc)
+        #settlements = df.settlements.unique()
+        #for settlement in settlements:
+        #    settlement_dist = frame[frame.settlement == settlement]
+        #    start_date = frame.UpdateDate.min.date()
+        #    end_date = frame.UpdateDate.max.date()
+
+        
+    create_pivot()
+    
+    #if num_manifests > 1:
+    #    create_pivot()
+    #    return
+    #else:
+    #        df = concatenate(frames=True)
+
+    return
+
 
     for key, frame in frames.items():
         #TODO: Add distribution chart for each distribution or merged chart for all distributions
